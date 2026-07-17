@@ -76,13 +76,28 @@ class SyncManager {
     this.notify();
   }
 
+  private getBaseUrl(): string {
+    if (typeof window === 'undefined') return 'http://localhost:5000';
+    const customBase = localStorage.getItem('trc_api_base_url');
+    return customBase ? customBase.replace(/\/$/, '') : 'http://localhost:5000';
+  }
+
+  private resolveUrl(url: string): string {
+    const base = this.getBaseUrl();
+    if (url.startsWith('http://localhost:5000')) {
+      return url.replace('http://localhost:5000', base);
+    }
+    return url;
+  }
+
   public async execute(url: string, options: RequestInit = {}): Promise<{ ok: boolean; data?: any; offline?: boolean }> {
     const method = options.method || 'GET';
+    const resolved = this.resolveUrl(url);
     
     // For read operations, execute normally without caching
     if (method === 'GET') {
       try {
-        const res = await fetch(url, options);
+        const res = await fetch(resolved, options);
         if (!res.ok) throw new Error(`HTTP error ${res.status}`);
         const data = await res.json();
         return { ok: true, data };
@@ -98,7 +113,7 @@ class SyncManager {
         throw new Error('Offline (network check)');
       }
 
-      const res = await fetch(url, options);
+      const res = await fetch(resolved, options);
       if (!res.ok) {
         // If server returned structured error (e.g. 500), let's not queue to avoid loop errors
         // Queue only network errors or temporary server down (502, 503, 504)
@@ -119,12 +134,12 @@ class SyncManager {
       return { ok: true, data };
 
     } catch (e) {
-      console.warn(`Write request failed, caching to offline queue: ${method} ${url}`, e);
+      console.warn(`Write request failed, caching to offline queue: ${method} ${resolved}`, e);
       
       // Store in queue
       const req: QueuedRequest = {
         id: Math.random().toString(36).substring(2) + Date.now().toString(),
-        url,
+        url, // Keep abstract local URL in queue to resolve dynamically during replay
         method,
         headers: (options.headers as Record<string, string>) || { 'Content-Type': 'application/json' },
         body: typeof options.body === 'string' ? options.body : '',
@@ -147,9 +162,11 @@ class SyncManager {
       return;
     }
 
+    const base = this.getBaseUrl();
+
     // Double check connection using a quick ping
     try {
-      const ping = await fetch('http://localhost:5000/api/dashboard/stats');
+      const ping = await fetch(`${base}/api/dashboard/stats`);
       if (!ping.ok) {
         this.notify();
         return; // server exists but returned error or database is down
@@ -167,8 +184,9 @@ class SyncManager {
 
     for (const req of queue) {
       try {
-        console.log(`Syncing request: ${req.method} ${req.url}`);
-        const res = await fetch(req.url, {
+        const resolvedUrl = this.resolveUrl(req.url);
+        console.log(`Syncing request: ${req.method} ${resolvedUrl}`);
+        const res = await fetch(resolvedUrl, {
           method: req.method,
           headers: req.headers,
           body: req.body || undefined

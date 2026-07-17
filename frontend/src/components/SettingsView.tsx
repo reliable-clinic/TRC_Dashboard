@@ -9,6 +9,23 @@ interface SettingsViewProps {
 export default function SettingsView({ dbConnected, triggerRefresh }: SettingsViewProps) {
   const [resetting, setResetting] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
+  
+  const [apiUrlInput, setApiUrlInput] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('trc_api_base_url') || 'http://localhost:5000';
+    }
+    return 'http://localhost:5000';
+  });
+  const [saveStatus, setSaveStatus] = useState('');
+
+  const handleSaveApiUrl = () => {
+    localStorage.setItem('trc_api_base_url', apiUrlInput);
+    setSaveStatus('API Endpoint saved successfully! Reloading...');
+    setTimeout(() => {
+      setSaveStatus('');
+      window.location.reload();
+    }, 1200);
+  };
 
   const handleResetDb = async () => {
     if (!confirm("WARNING: This will drop all tables and delete all patient files, clinic billing, and follow-ups. Then it will load fresh mock database records. Proceed?")) return;
@@ -59,6 +76,40 @@ export default function SettingsView({ dbConnected, triggerRefresh }: SettingsVi
           <span>Driver:</span>
           <span style={{ color: '#ffffff' }}>Microsoft Access Driver (*.mdb, *.accdb)</span>
         </div>
+      </section>
+
+      {/* API SERVER CONNECTION SETTING */}
+      <section className="card" style={styles.sectionCard}>
+        <h3 style={styles.sectionTitle}>
+          <RefreshCw size={18} color="#d4af37" style={{ marginRight: '8px' }} /> API Connection Settings
+        </h3>
+        <p style={{ fontSize: '0.8rem', color: '#a0a0b0', lineHeight: 1.4 }}>
+          Specify the API base URL. If you are accessing this dashboard online (e.g. GitHub Pages) and want to query the local database on your clinic computer, enter its local IP address or your public ngrok HTTPS address here.
+        </p>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '6px' }}>
+          <input
+            style={{
+              backgroundColor: '#0c0c0e',
+              border: '1px solid rgba(212, 175, 55, 0.2)',
+              color: '#ffffff',
+              padding: '10px 14px',
+              borderRadius: '6px',
+              flexGrow: 1,
+              outline: 'none',
+              fontSize: '0.85rem'
+            }}
+            type="text"
+            placeholder="e.g. http://localhost:5000"
+            value={apiUrlInput}
+            onChange={e => setApiUrlInput(e.target.value)}
+          />
+          <button className="btn btn-primary" onClick={handleSaveApiUrl}>
+            Save Endpoint
+          </button>
+        </div>
+        {saveStatus && (
+          <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600 }}>{saveStatus}</span>
+        )}
       </section>
 
       {/* CLINIC DATA PREVIEW */}
