@@ -10,7 +10,7 @@ try:
 except ImportError:
     HAS_POSTGRES = False
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL") or "postgresql://neondb_owner:npg_8DNnSiEfjIs0@ep-soft-water-azsczfgi.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 IS_POSTGRES = HAS_POSTGRES and (DATABASE_URL is not None and (DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")))
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "TRC_Database.accdb"))
@@ -42,6 +42,7 @@ def translate_query(sql: str) -> str:
 
 def map_schema_sql(sql: str) -> str:
     if IS_POSTGRES:
+        sql = sql.replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS')
         sql = sql.replace('COUNTER PRIMARY KEY', 'SERIAL PRIMARY KEY')
         sql = sql.replace('MEMO', 'TEXT')
         sql = sql.replace('DOUBLE', 'DOUBLE PRECISION')
@@ -109,7 +110,10 @@ def run_migrations(conn):
         cursor.execute("UPDATE Sales SET PaymentMethod = 'Cash' WHERE PaymentMethod IS NULL")
         conn.commit()
     except Exception:
-        pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         
     # 2. Create SyncedWebBookings table if not exists
     try:
@@ -120,7 +124,10 @@ def run_migrations(conn):
         """)
         conn.commit()
     except Exception:
-        pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     # 3. Create Users table if not exists
     try:
@@ -134,7 +141,10 @@ def run_migrations(conn):
         """)
         conn.commit()
     except Exception:
-        pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
     # Seed default users if they are not in the database
     for username, password, role, fullname in [
@@ -147,20 +157,26 @@ def run_migrations(conn):
             cursor.execute("INSERT INTO Users (Username, [Password], [Role], FullName) VALUES (?, ?, ?, ?)", (username, password, role, fullname))
             conn.commit()
         except Exception:
-            pass
+            try:
+                conn.rollback()
+            except Exception:
+                pass
 
 def get_db_connection():
     if IS_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
-        wrapped_conn = PostgresConnectionWrapper(conn)
         try:
-            cursor = wrapped_conn.cursor()
-            cursor.execute("SELECT * FROM Users LIMIT 1")
-        except Exception:
-            conn.rollback()
-            init_db(wrapped_conn)
-        run_migrations(wrapped_conn)
-        return wrapped_conn
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=5)
+            wrapped_conn = PostgresConnectionWrapper(conn)
+            try:
+                cursor = wrapped_conn.cursor()
+                cursor.execute("SELECT * FROM Users LIMIT 1")
+            except Exception:
+                conn.rollback()
+                init_db(wrapped_conn)
+            run_migrations(wrapped_conn)
+            return wrapped_conn
+        except Exception as pg_err:
+            print(f"Failed to connect to cloud database (offline?): {pg_err}. Falling back to local MS Access.")
 
     if not os.path.exists(DB_PATH):
         create_access_db(DB_PATH)
@@ -314,6 +330,10 @@ def init_db(conn=None):
         print("Relationships established successfully.")
     except Exception as e:
         print(f"Warning setting constraints (might be driver limitation): {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
     
     # Inject Mock Data
     print("Injecting mock data...")
