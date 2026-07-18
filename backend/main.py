@@ -391,6 +391,118 @@ def create_appointment(data: AppointmentCreate):
     finally:
         conn.close()
 
+def parse_date_time(date_str: str, time_slot: str) -> datetime.datetime:
+    try:
+        time_part = time_slot.split(" - ")[0].strip()
+        parts = time_part.split()
+        time_str = parts[0]
+        modifier = parts[1].upper()
+        
+        time_parts = time_str.split(':')
+        hours = int(time_parts[0])
+        minutes = int(time_parts[1])
+        
+        if modifier == "PM" and hours < 12:
+            hours += 12
+        if modifier == "AM" and hours == 12:
+            hours = 0
+            
+        base_date = parse_date(date_str)
+        return base_date.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    except Exception:
+        base_date = parse_date(date_str)
+        if base_date:
+            return base_date.replace(hour=12, minute=0, second=0, microsecond=0)
+        return datetime.datetime.now()
+
+@app.post("/api/appointments/sync-website")
+def sync_website_bookings():
+    import urllib.request
+    import json
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    try:
+        url = "https://extendsclass.com/api/json-storage/bin/ffaadcd"
+        req = urllib.request.Request(url)
+        try:
+            with urllib.request.urlopen(req) as response:
+                html = response.read().decode('utf-8')
+                bookings = json.loads(html)
+        except Exception as e:
+            return {"message": f"Could not fetch online appointments: {str(e)}"}
+
+        if not bookings or not isinstance(bookings, list) or len(bookings) == 0:
+            return {"message": "No pending online appointments found on website."}
+
+        count = 0
+        for b in bookings:
+            booking_id = b.get("id")
+            if not booking_id:
+                continue
+
+            # 1. Check if booking already synced
+            cursor.execute("SELECT BookingID FROM SyncedWebBookings WHERE BookingID = ?", (booking_id,))
+            if cursor.fetchone():
+                continue
+
+            phone = b.get("phone")
+            name = b.get("name")
+            email = b.get("email", "no-email@example.com")
+            service = b.get("service", "Aesthetic Consultation")
+            date_str = b.get("date")
+            time_slot = b.get("time")
+
+            # 2. Check if patient exists
+            patient_id = None
+            cursor.execute("SELECT PatientID FROM Patients WHERE Mobile = ?", (phone,))
+            row = cursor.fetchone()
+            if row:
+                patient_id = row[0]
+            else:
+                # Create patient
+                reg_date = datetime.datetime.now()
+                try:
+                    followup = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                except Exception:
+                    followup = reg_date + datetime.timedelta(days=14)
+                
+                cursor.execute("""
+                    INSERT INTO Patients (PatientName, FatherName, Gender, Age, Mobile, Address, TreatmentType, Notes, RegDate, FollowUpDate)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (name, "Online Website Registration", "Male", 25, phone, "Website Booking Form", service, f"Registered online for {service}. Email: {email}", reg_date, followup))
+                
+                cursor.execute("SELECT @@IDENTITY")
+                id_row = cursor.fetchone()
+                if id_row:
+                    patient_id = id_row[0]
+
+            if not patient_id:
+                continue
+
+            # 3. Check if appointment already scheduled for this patient on this date
+            app_date_time = parse_date_time(date_str, time_slot)
+            cursor.execute("SELECT AppointmentID FROM Appointments WHERE PatientID = ? AND AppointmentDate = ?", (patient_id, app_date_time))
+            if not cursor.fetchone():
+                cursor.execute("""
+                    INSERT INTO Appointments (PatientID, AppointmentDate, Doctor, Status)
+                    VALUES (?, ?, ?, ?)
+                """, (patient_id, app_date_time, "Dr. Ahsan", "Scheduled"))
+                count += 1
+
+            # 4. Record as synced in local table
+            try:
+                cursor.execute("INSERT INTO SyncedWebBookings (BookingID) VALUES (?)", (booking_id,))
+            except Exception:
+                pass
+
+        conn.commit()
+        return {"message": f"Successfully synced {count} new appointments from website!"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
 @app.put("/api/appointments/{appointment_id}")
 def update_appointment_status(appointment_id: int, status: str):
     conn = database.get_db_connection()
