@@ -3,8 +3,87 @@ import subprocess
 import datetime
 import pyodbc
 
+# Try importing psycopg2 for cloud PostgreSQL support
+try:
+    import psycopg2
+    HAS_POSTGRES = True
+except ImportError:
+    HAS_POSTGRES = False
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+IS_POSTGRES = HAS_POSTGRES and (DATABASE_URL is not None and (DATABASE_URL.startswith("postgres://") or DATABASE_URL.startswith("postgresql://")))
+
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "TRC_Database.accdb"))
 CONN_STR = f"Driver={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={DB_PATH};"
+
+def translate_query(sql: str) -> str:
+    if not sql:
+        return sql
+    
+    # 1. Map placeholders
+    sql = sql.replace('?', '%s')
+    
+    # 2. Map brackets and fields
+    sql = sql.replace('[Password]', 'Password')
+    sql = sql.replace('[Role]', 'Role')
+    sql = sql.replace('[Date]', 'Date')
+    sql = sql.replace('[status]', 'status')
+    sql = sql.replace('[PaymentMethod]', 'PaymentMethod')
+    
+    # 3. Map MS Access specific date functions to PostgreSQL equivalents
+    sql = sql.replace("DateSerial(Year(Date()), Month(Date()), 1)", "date_trunc('month', CURRENT_DATE)")
+    sql = sql.replace("DateAdd('d', 1, Date())", "CURRENT_DATE + INTERVAL '1 day'")
+    sql = sql.replace("Date()", "CURRENT_DATE")
+    
+    # 4. Map Identity retrieval
+    sql = sql.replace("SELECT @@IDENTITY", "SELECT LASTVAL()")
+    
+    return sql
+
+def map_schema_sql(sql: str) -> str:
+    if IS_POSTGRES:
+        sql = sql.replace('COUNTER PRIMARY KEY', 'SERIAL PRIMARY KEY')
+        sql = sql.replace('MEMO', 'TEXT')
+        sql = sql.replace('DOUBLE', 'DOUBLE PRECISION')
+        sql = sql.replace('DATETIME', 'TIMESTAMP')
+        sql = sql.replace('CURRENCY', 'DECIMAL(10,2)')
+    return sql
+
+class PostgresCursorWrapper:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+        
+    def execute(self, sql, params=None):
+        sql = translate_query(sql)
+        if "CREATE TABLE" in sql.upper() or "ALTER TABLE" in sql.upper() or "ADD COLUMN" in sql.upper():
+            sql = map_schema_sql(sql)
+        
+        if params is not None:
+            if not isinstance(params, (list, tuple)):
+                params = (params,)
+            return self._cursor.execute(sql, params)
+        else:
+            return self._cursor.execute(sql)
+            
+    def executemany(self, sql, seq_of_params):
+        sql = translate_query(sql)
+        if "CREATE TABLE" in sql.upper() or "ALTER TABLE" in sql.upper() or "ADD COLUMN" in sql.upper():
+            sql = map_schema_sql(sql)
+        return self._cursor.executemany(sql, seq_of_params)
+
+class PostgresConnectionWrapper:
+    def __init__(self, conn):
+        self._conn = conn
+        
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+        
+    def cursor(self):
+        return PostgresCursorWrapper(self._conn.cursor())
+
 
 def create_access_db(path):
     print(f"Creating MS Access database file at: {path}")
@@ -71,6 +150,18 @@ def run_migrations(conn):
             pass
 
 def get_db_connection():
+    if IS_POSTGRES:
+        conn = psycopg2.connect(DATABASE_URL)
+        wrapped_conn = PostgresConnectionWrapper(conn)
+        try:
+            cursor = wrapped_conn.cursor()
+            cursor.execute("SELECT * FROM Users LIMIT 1")
+        except Exception:
+            conn.rollback()
+            init_db(wrapped_conn)
+        run_migrations(wrapped_conn)
+        return wrapped_conn
+
     if not os.path.exists(DB_PATH):
         create_access_db(DB_PATH)
         init_db()
@@ -79,9 +170,12 @@ def get_db_connection():
     return conn
 
 
-def init_db():
+def init_db(conn=None):
     print("Initializing database tables and relationships...")
-    conn = pyodbc.connect(CONN_STR)
+    close_at_end = False
+    if conn is None:
+        conn = pyodbc.connect(CONN_STR)
+        close_at_end = True
     cursor = conn.cursor()
     
     # 1. Create Patients table
@@ -225,7 +319,8 @@ def init_db():
     print("Injecting mock data...")
     inject_mock_data(cursor)
     conn.commit()
-    conn.close()
+    if close_at_end:
+        conn.close()
     print("Database initialization complete!")
 
 def inject_mock_data(cursor):
