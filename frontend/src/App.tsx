@@ -32,14 +32,161 @@ export type TabType =
   | 'reports' 
   | 'settings';
 
+interface AuthScreenProps {
+  onLoginSuccess: (user: any) => void;
+}
+
+function AuthScreen({ onLoginSuccess }: AuthScreenProps) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [role, setRole] = useState('Staff');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!username.trim() || !password.trim()) {
+      setErrorMsg('Please enter both username and password.');
+      return;
+    }
+
+    try {
+      if (isLogin) {
+        // Login
+        const res = await fetch('http://localhost:5000/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ Username: username, Password: password })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          onLoginSuccess(data.user);
+          localStorage.setItem('trc_logged_user', JSON.stringify(data.user));
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          setErrorMsg(errData.error || 'Invalid username or password.');
+        }
+      } else {
+        // Signup
+        if (!fullName.trim()) {
+          setErrorMsg('Please enter your full name.');
+          return;
+        }
+        const res = await fetch('http://localhost:5000/api/auth/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ Username: username, Password: password, FullName: fullName, Role: role })
+        });
+        if (res.ok) {
+          setSuccessMsg('Signup successful! Please log in.');
+          setIsLogin(true);
+          setFullName('');
+          setPassword('');
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          setErrorMsg(errData.error || 'Signup failed.');
+        }
+      }
+    } catch (e) {
+      setErrorMsg('Failed to connect to local API server. Make sure the TRC Desktop App is running.');
+    }
+  };
+
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: '100vh',
+      backgroundColor: '#070708',
+      backgroundImage: 'radial-gradient(circle at center, rgba(212, 175, 55, 0.05) 0%, rgba(0,0,0,0) 70%)',
+      width: '100vw',
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      zIndex: 9999
+    }}>
+      <div className="card" style={{
+        width: '400px',
+        padding: '30px',
+        border: '1px solid rgba(212, 175, 55, 0.25)',
+        boxShadow: '0 0 30px rgba(212, 175, 55, 0.08)',
+        background: '#0c0c0e',
+        borderRadius: '12px'
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '25px' }}>
+          <div style={{
+            fontFamily: "'Playfair Display', serif",
+            fontSize: '1.8rem',
+            fontWeight: 'bold',
+            color: '#d4af37',
+            border: '2px solid #d4af37',
+            borderRadius: '50%',
+            width: '60px',
+            height: '60px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: '10px',
+            background: 'radial-gradient(circle, rgba(212, 175, 55, 0.1) 0%, rgba(0,0,0,0) 80%)',
+            boxShadow: '0 0 15px rgba(212, 175, 55, 0.2)'
+          }}>TRC</div>
+          <h2 style={{ fontSize: '1.2rem', color: '#ffffff', letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '2px' }}>
+            The Reliable Clinic
+          </h2>
+          <span style={{ fontSize: '0.75rem', color: '#d4af37', textTransform: 'uppercase', letterSpacing: '1px' }}>
+            Management Portal
+          </span>
+        </div>
+
+        {errorMsg && <div style={{ color: '#ef4444', fontSize: '0.8rem', padding: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: '6px', marginBottom: '15px', fontWeight: 500 }}>{errorMsg}</div>}
+        {successMsg && <div style={{ color: '#10b981', fontSize: '0.8rem', padding: '10px', backgroundColor: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.15)', borderRadius: '6px', marginBottom: '15px', fontWeight: 500 }}>{successMsg}</div>}
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginTop: '10px' }}>
+          <div className="form-group">
+            <label className="form-label">Username</label>
+            <input className="form-input" type="text" required value={username} onChange={e => setUsername(e.target.value)} placeholder="Enter username" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input className="form-input" type="password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password" />
+          </div>
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '12px', marginTop: '10px' }}>
+            Sign In
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [dbConnected, setDbConnected] = useState<boolean>(true);
   const [globalRefreshKey, setGlobalRefreshKey] = useState<number>(0);
+  const [user, setUser] = useState<any>(null);
   
   // Offline sync states
   const [queueLength, setQueueLength] = useState<number>(0);
   const [isOnline, setIsOnline] = useState<boolean>(true);
+
+  // Load auth session on startup
+  useEffect(() => {
+    const stored = localStorage.getItem('trc_logged_user');
+    if (stored) {
+      try { setUser(JSON.parse(stored)); } catch (e) { }
+    }
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('trc_logged_user');
+    setUser(null);
+  };
 
   // Subscribe to syncManager queue and online changes
   useEffect(() => {
@@ -65,7 +212,10 @@ export default function App() {
   };
 
   const renderActiveView = () => {
-    switch (activeTab) {
+    const restrictedTabs = ['inventory', 'purchases', 'expenses', 'reports', 'settings'];
+    const currentTab = user?.Role === 'Staff' && restrictedTabs.includes(activeTab) ? 'dashboard' : activeTab;
+
+    switch (currentTab) {
       case 'dashboard':
         return <DashboardView setActiveTab={setActiveTab} refreshKey={globalRefreshKey} triggerRefresh={triggerGlobalRefresh} />;
       case 'patients':
@@ -89,7 +239,11 @@ export default function App() {
       case 'reports':
         return <ReportsView refreshKey={globalRefreshKey} />;
       case 'settings':
-        return <SettingsView dbConnected={dbConnected} triggerRefresh={triggerGlobalRefresh} />;
+        return (user?.Role === 'Admin' || user?.Role === 'Doctor') ? (
+          <SettingsView dbConnected={dbConnected} triggerRefresh={triggerGlobalRefresh} />
+        ) : (
+          <DashboardView setActiveTab={setActiveTab} refreshKey={globalRefreshKey} triggerRefresh={triggerGlobalRefresh} />
+        );
       default:
         return <DashboardView setActiveTab={setActiveTab} refreshKey={globalRefreshKey} triggerRefresh={triggerGlobalRefresh} />;
     }
@@ -110,6 +264,10 @@ export default function App() {
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
+  if (!user) {
+    return <AuthScreen onLoginSuccess={setUser} />;
+  }
+
   return (
     <div className="app-container" style={styles.appContainer}>
       {/* SIDEBAR NAVIGATION */}
@@ -123,7 +281,13 @@ export default function App() {
         </div>
 
         <nav style={styles.navMenu}>
-          {menuItems.map(item => {
+          {menuItems.filter(item => {
+            const restrictedTabs = ['inventory', 'purchases', 'expenses', 'reports', 'settings'];
+            if (user?.Role === 'Staff' && restrictedTabs.includes(item.id)) {
+              return false;
+            }
+            return true;
+          }).map(item => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
@@ -181,6 +345,21 @@ export default function App() {
           </div>
 
           <div style={styles.headerRight}>
+            {user && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginRight: '15px', borderRight: '1px solid rgba(255, 255, 255, 0.08)', paddingRight: '15px' }}>
+                <span style={{ fontSize: '0.8rem', color: '#d4af37', fontWeight: 600 }}>
+                  {user.FullName} ({user.Role})
+                </span>
+                <button 
+                  onClick={handleLogout}
+                  className="btn btn-secondary" 
+                  style={{ padding: '4px 8px', fontSize: '0.7rem', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.2)' }}
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+            
             <div style={styles.whatsappBox}>
               <Phone size={14} color="#25D366" />
               <span style={styles.whatsappNumber}>0342-3220825</span>

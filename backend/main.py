@@ -43,6 +43,7 @@ class SaleCreate(BaseModel):
     ServiceName: str
     Qty: int
     UnitPrice: float
+    PaymentMethod: Optional[str] = "Cash"
 
 class PurchaseCreate(BaseModel):
     PurchaseDate: str # ISO Format YYYY-MM-DD
@@ -451,9 +452,9 @@ def create_sale(data: SaleCreate):
         total_amount = data.Qty * data.UnitPrice
         
         cursor.execute("""
-            INSERT INTO Sales (SaleDate, PatientID, ServiceName, Qty, UnitPrice, TotalAmount)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (sale_date, data.PatientID, data.ServiceName, data.Qty, data.UnitPrice, total_amount))
+            INSERT INTO Sales (SaleDate, PatientID, ServiceName, Qty, UnitPrice, TotalAmount, PaymentMethod)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (sale_date, data.PatientID, data.ServiceName, data.Qty, data.UnitPrice, total_amount, data.PaymentMethod))
         
         # Automatically update used qty in inventory if the service matches an inventory item
         # e.g., "PRP Therapy" uses 1 "PRP Kit"
@@ -867,6 +868,67 @@ def reset_database():
         return {"message": "Database reset and mock data loaded successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class UserLogin(BaseModel):
+    Username: str
+    Password: str
+
+class UserSignup(BaseModel):
+    Username: str
+    Password: str
+    Role: str
+    FullName: str
+
+@app.post("/api/auth/login")
+def login(data: UserLogin):
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if data.Username == "admin" and data.Password == "admin786":
+            return {
+                "message": "Login successful",
+                "user": {
+                    "Username": "admin",
+                    "Role": "Admin",
+                    "FullName": "Administrator"
+                }
+            }
+        cursor.execute("SELECT * FROM Users WHERE Username = ? AND Password = ?", (data.Username, data.Password))
+        row = cursor.fetchone()
+        user = database.row_to_dict(cursor, row)
+        if user:
+            return {
+                "message": "Login successful",
+                "user": {
+                    "Username": user["Username"],
+                    "Role": user["Role"],
+                    "FullName": user["FullName"]
+                }
+            }
+        else:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/api/auth/signup")
+def signup(data: UserSignup):
+    conn = database.get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM Users WHERE Username = ?", (data.Username,))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="Username already exists")
+        cursor.execute("INSERT INTO Users (Username, Password, Role, FullName) VALUES (?, ?, ?, ?)", 
+                       (data.Username, data.Password, data.Role, data.FullName))
+        conn.commit()
+        return {"message": "Signup successful"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 # Mount frontend static files if they exist (Production mode setup)
 frontend_dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))

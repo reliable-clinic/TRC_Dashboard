@@ -49,7 +49,10 @@ class SyncManager {
     this.subscribers.forEach(cb => cb(len, online));
   }
 
-  private isNetworkOnline(): boolean {
+  private isNetworkOnline(url?: string): boolean {
+    if (url && (url.includes('localhost') || url.includes('127.0.0.1') || url.includes('192.168.'))) {
+      return true; // Local addresses are always online and don't need internet
+    }
     if (typeof navigator === 'undefined') return true;
     return navigator.onLine;
   }
@@ -109,7 +112,7 @@ class SyncManager {
     // For write operations (POST, PUT, DELETE)
     try {
       // Check if online before sending
-      if (!this.isNetworkOnline()) {
+      if (!this.isNetworkOnline(resolved)) {
         throw new Error('Offline (network check)');
       }
 

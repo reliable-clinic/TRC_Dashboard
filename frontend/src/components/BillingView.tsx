@@ -12,6 +12,7 @@ interface Sale {
   TotalAmount: number;
   PatientName: string;
   Mobile: string;
+  PaymentMethod?: string;
 }
 
 interface BillingViewProps {
@@ -26,7 +27,7 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
   const [selectedInvoice, setSelectedInvoice] = useState<Sale | null>(null);
   
   const [patients, setPatients] = useState<any[]>([]);
-  const [form, setForm] = useState({ PatientID: '', ServiceName: 'PRP Therapy', Qty: '1', UnitPrice: '' });
+  const [form, setForm] = useState({ PatientID: '', ServiceName: 'PRP Therapy', Qty: '1', UnitPrice: '', PaymentMethod: 'Cash' });
 
   useEffect(() => {
     fetchSales();
@@ -67,7 +68,8 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
           ServiceName: form.ServiceName,
           Qty: qty,
           UnitPrice: unitPrice,
-          SaleDate: sDate
+          SaleDate: sDate,
+          PaymentMethod: form.PaymentMethod
         })
       });
 
@@ -84,13 +86,14 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
           UnitPrice: unitPrice,
           TotalAmount: qty * unitPrice,
           PatientName: pat ? pat.PatientName : 'Patient Record',
-          Mobile: pat ? pat.Mobile : ''
+          Mobile: pat ? pat.Mobile : '',
+          PaymentMethod: form.PaymentMethod
         };
 
         setSales(prev => [newSale, ...prev]);
         setShowAddModal(false);
         triggerRefresh();
-        setForm({ PatientID: '', ServiceName: 'PRP Therapy', Qty: '1', UnitPrice: '' });
+        setForm({ PatientID: '', ServiceName: 'PRP Therapy', Qty: '1', UnitPrice: '', PaymentMethod: 'Cash' });
       }
     } catch (e) { console.error(e); }
   };
@@ -140,6 +143,7 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
               <th>Service / Treatment</th>
               <th>Qty</th>
               <th>Unit Price</th>
+              <th>Payment Method</th>
               <th>Total Amount</th>
               <th>Actions</th>
             </tr>
@@ -147,7 +151,7 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
           <tbody>
             {filteredSales.length === 0 ? (
               <tr>
-                <td colSpan={9} style={{ textAlign: 'center', padding: '30px' }}>No billing transactions found.</td>
+                <td colSpan={10} style={{ textAlign: 'center', padding: '30px' }}>No billing transactions found.</td>
               </tr>
             ) : (
               filteredSales.map(s => (
@@ -159,6 +163,18 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
                   <td>{s.ServiceName}</td>
                   <td>{s.Qty}</td>
                   <td>Rs. {s.UnitPrice.toLocaleString()}</td>
+                  <td>
+                    <span style={{
+                      padding: '3px 6px',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      backgroundColor: 'rgba(212, 175, 55, 0.08)',
+                      color: '#d4af37',
+                      border: '1px solid rgba(212, 175, 55, 0.2)'
+                    }}>
+                      {s.PaymentMethod || 'Cash'}
+                    </span>
+                  </td>
                   <td style={{ color: '#10b981', fontWeight: 600 }}>Rs. {s.TotalAmount.toLocaleString()}</td>
                   <td>
                     <button style={styles.actionBtn} onClick={() => setSelectedInvoice(s)} title="View & Print Receipt">
@@ -211,6 +227,16 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
                 <div className="form-group">
                   <label className="form-label">Unit Price (Rs.)</label>
                   <input className="form-input" type="number" required min={0} value={form.UnitPrice} onChange={e => setForm({...form, UnitPrice: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Payment Method</label>
+                  <select className="form-select" value={form.PaymentMethod} onChange={e => setForm({...form, PaymentMethod: e.target.value})}>
+                    <option value="Cash">Cash</option>
+                    <option value="Bank">Bank</option>
+                    <option value="Card">Card</option>
+                    <option value="Easypaisa">Easypaisa</option>
+                    <option value="Jazzcash">Jazzcash</option>
+                  </select>
                 </div>
               </div>
 
@@ -266,6 +292,7 @@ export default function BillingView({ refreshKey, triggerRefresh }: BillingViewP
                   <span style={styles.receiptLabel}>Invoice Details:</span>
                   <span style={styles.receiptVal}>Invoice #: INV-{String(selectedInvoice.SaleID).padStart(6, '0')}</span>
                   <span style={styles.receiptSubtext}>Date: {formatDate(selectedInvoice.SaleDate)}</span>
+                  <span style={styles.receiptSubtext}>Payment Mode: {selectedInvoice.PaymentMethod || 'Cash'}</span>
                 </div>
               </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Search, Eye, Edit2, Trash2, Calendar, DollarSign, Syringe, Sparkles, Plus, Clock, X
+  Search, Eye, Edit2, Trash2, Calendar, DollarSign, Syringe, Sparkles, Plus, Clock, X, MessageCircle
 } from 'lucide-react';
 import { syncManager } from '../utils/syncManager';
 
@@ -239,7 +239,33 @@ export default function PatientListView({ refreshKey, triggerRefresh }: PatientL
               </div>
               <div>
                 <span style={styles.label}>Mobile Number</span>
-                <span style={styles.value}>{selectedPatient.patient.Mobile}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={styles.value}>{selectedPatient.patient.Mobile}</span>
+                  {selectedPatient.patient.Mobile && (
+                    <button 
+                      onClick={() => {
+                        let cleanPhone = selectedPatient.patient.Mobile.replace(/[^0-9]/g, '');
+                        if (cleanPhone.startsWith('0')) {
+                          cleanPhone = '92' + cleanPhone.substring(1);
+                        }
+                        const message = `Hello ${selectedPatient.patient.PatientName}, this is The Reliable Aesthetic Clinic.`;
+                        const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
+                        window.open(url, '_blank');
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: 0,
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}
+                      title="Chat on WhatsApp"
+                    >
+                      <MessageCircle size={14} color="#25D366" />
+                    </button>
+                  )}
+                </div>
               </div>
               <div>
                 <span style={styles.label}>Primary Treatment</span>

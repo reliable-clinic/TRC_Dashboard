@@ -22,11 +22,62 @@ def create_access_db(path):
         raise Exception(f"Failed to create MS Access database: {result.stderr or result.stdout}")
     print("MS Access database file created successfully.")
 
+def run_migrations(conn):
+    cursor = conn.cursor()
+    # 1. Add PaymentMethod to Sales if not exists
+    try:
+        cursor.execute("ALTER TABLE Sales ADD COLUMN PaymentMethod VARCHAR(50)")
+        cursor.execute("UPDATE Sales SET PaymentMethod = 'Cash' WHERE PaymentMethod IS NULL")
+        conn.commit()
+    except Exception:
+        pass
+        
+    # 2. Create SyncedWebBookings table if not exists
+    try:
+        cursor.execute("""
+            CREATE TABLE SyncedWebBookings (
+                BookingID VARCHAR(50) PRIMARY KEY
+            )
+        """)
+        conn.commit()
+    except Exception:
+        pass
+
+    # 3. Create Users table if not exists
+    try:
+        cursor.execute("""
+            CREATE TABLE Users (
+                Username VARCHAR(50) PRIMARY KEY,
+                Password VARCHAR(255),
+                Role VARCHAR(20),
+                FullName VARCHAR(100)
+            )
+        """)
+        conn.commit()
+    except Exception:
+        pass
+
+    # Seed default users if they are not in the database
+    for username, password, role, fullname in [
+        ("admin", "admin786", "Admin", "Administrator"),
+        ("doctor", "doctor786", "Doctor", "Dr. Ahsan"),
+        ("staff", "staff786", "Staff", "TRC Staff")
+    ]:
+        try:
+            cursor.execute("UPDATE Users SET [Password] = ? WHERE Username = ?", (password, username))
+            cursor.execute("INSERT INTO Users (Username, [Password], [Role], FullName) VALUES (?, ?, ?, ?)", (username, password, role, fullname))
+            conn.commit()
+        except Exception:
+            pass
+
 def get_db_connection():
     if not os.path.exists(DB_PATH):
         create_access_db(DB_PATH)
         init_db()
-    return pyodbc.connect(CONN_STR)
+    conn = pyodbc.connect(CONN_STR)
+    run_migrations(conn)
+    return conn
+
 
 def init_db():
     print("Initializing database tables and relationships...")
@@ -70,7 +121,8 @@ def init_db():
             ServiceName VARCHAR(255),
             Qty INTEGER,
             UnitPrice CURRENCY,
-            TotalAmount CURRENCY
+            TotalAmount CURRENCY,
+            PaymentMethod VARCHAR(50) DEFAULT 'Cash'
         )
     """)
     

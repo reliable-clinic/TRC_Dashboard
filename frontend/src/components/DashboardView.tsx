@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Users, Calendar, DollarSign, TrendingUp, AlertTriangle, Clock, ArrowRight,
-  PlusCircle, RefreshCw
+  PlusCircle, RefreshCw, Sparkles
 } from 'lucide-react';
 import { 
   ComposedChart, Bar, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -53,16 +53,66 @@ const COLORS = ['#d4af37', '#a87c1e', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899'
 const GENDER_COLORS = ['#3b82f6', '#ec4899', '#a0a0b0'];
 const PAY_COLORS = ['#10b981', '#ef4444'];
 
+const CylinderBar = (props: any) => {
+  const { fill, x, y, width, height } = props;
+  if (!width || !height || height <= 0) return null;
+
+  const lidHeight = Math.min(height, 8);
+  const path = `
+    M ${x},${y + lidHeight}
+    L ${x},${y + height}
+    A ${width/2},${lidHeight} 0 0,0 ${x + width},${y + height}
+    L ${x + width},${y + lidHeight}
+    A ${width/2},${lidHeight} 0 0,0 ${x},${y + lidHeight}
+    Z
+  `;
+
+  return (
+    <g>
+      <path d={path} fill={fill} />
+      <ellipse 
+        cx={x + width / 2} 
+        cy={y + lidHeight} 
+        rx={width / 2} 
+        ry={lidHeight} 
+        fill="#ffea9f" 
+        style={{ filter: 'brightness(1.15)' }}
+      />
+    </g>
+  );
+};
+
 export default function DashboardView({ setActiveTab, refreshKey, triggerRefresh }: DashboardViewProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [charts, setCharts] = useState<ChartData | null>(null);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [lowStock, setLowStock] = useState<LowStockItem[]>([]);
   const [dailyReport, setDailyReport] = useState<any[]>([]);
+  const [onlineBookings, setOnlineBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Quick Action Modal states
   const [activeModal, setActiveModal] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncWebsite = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/appointments/sync-website', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        alert(data.message || "Successfully synced online bookings!");
+        triggerRefresh();
+      } else {
+        alert("Sync failed: Backend returned an error.");
+      }
+    } catch (e) {
+      alert("Sync failed: Connection error.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const [patientsList, setPatientsList] = useState<any[]>([]);
   const [inventoryList, setInventoryList] = useState<any[]>([]);
   
@@ -111,6 +161,17 @@ export default function DashboardView({ setActiveTab, refreshKey, triggerRefresh
       // Fetch Patients list for form dropdowns
       const patRes = await fetch('http://localhost:5000/api/patients');
       if (patRes.ok) setPatientsList(await patRes.json());
+
+      // Fetch Online Bookings from extendsclass.com
+      try {
+        const obRes = await fetch('https://extendsclass.com/api/json-storage/bin/ffaadcd');
+        if (obRes.ok) {
+          const obData = await obRes.json();
+          if (Array.isArray(obData)) setOnlineBookings(obData);
+        }
+      } catch (e) {
+        console.warn('Error loading online bookings from cloud:', e);
+      }
 
     } catch (error) {
       console.error("Error loading dashboard data:", error);
@@ -179,7 +240,8 @@ export default function DashboardView({ setActiveTab, refreshKey, triggerRefresh
           ServiceName: saleForm.ServiceName,
           Qty: parseInt(saleForm.Qty),
           UnitPrice: parseFloat(saleForm.UnitPrice),
-          SaleDate: new Date().toISOString()
+          SaleDate: new Date().toISOString(),
+          PaymentMethod: 'Cash'
         })
       });
       if (res.ok) {
@@ -251,6 +313,88 @@ export default function DashboardView({ setActiveTab, refreshKey, triggerRefresh
         setFollowForm({ PatientID: '', FollowUpDate: '', Remarks: '' });
       }
     } catch (e) { console.error(e); }
+  };
+
+  const handleApproveOnlineBooking = async (booking: any) => {
+    try {
+      // Check if patient already exists by phone
+      const patSearchRes = await fetch(`http://localhost:5000/api/patients?search=${encodeURIComponent(booking.phone)}`);
+      let patientId: number | null = null;
+      if (patSearchRes.ok) {
+        const matches = await patSearchRes.json();
+        if (matches && matches.length > 0) {
+          patientId = matches[0].PatientID;
+        }
+      }
+
+      if (!patientId) {
+        // Create Patient
+        const newPatRes = await fetch('http://localhost:5000/api/patients', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            PatientName: booking.name,
+            FatherName: 'Online Website Registration',
+            Gender: 'Male',
+            Age: 25,
+            Mobile: booking.phone,
+            Address: 'Website Booking Form',
+            TreatmentType: booking.service,
+            Notes: `Registered online. Email: ${booking.email || 'None'}`
+          })
+        });
+        if (newPatRes.ok) {
+          const patData = await newPatRes.json();
+          patientId = patData.PatientID;
+        }
+      }
+
+      if (patientId) {
+        // Create Appointment
+        await fetch('http://localhost:5000/api/appointments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            PatientID: patientId,
+            AppointmentDate: booking.date + 'T12:00:00', // standard fallback
+            Doctor: 'Dr. Ahsan',
+            Status: 'Scheduled'
+          })
+        });
+
+        // Remove from extendsclass list
+        const updatedList = onlineBookings.filter(b => b.id !== booking.id);
+        await fetch('https://extendsclass.com/api/json-storage/bin/ffaadcd', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedList)
+        });
+
+        setOnlineBookings(updatedList);
+        triggerRefresh();
+        alert('Online booking successfully approved and registered!');
+      }
+    } catch (err) {
+      console.error('Error approving booking:', err);
+      alert('Failed to approve online booking.');
+    }
+  };
+
+  const handleRejectOnlineBooking = async (bookingId: string) => {
+    if (!confirm('Are you sure you want to dismiss this booking?')) return;
+    try {
+      const updatedList = onlineBookings.filter(b => b.id !== bookingId);
+      await fetch('https://extendsclass.com/api/json-storage/bin/ffaadcd', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedList)
+      });
+      setOnlineBookings(updatedList);
+      triggerRefresh();
+    } catch (err) {
+      console.error(err);
+      alert('Failed to dismiss booking.');
+    }
   };
 
   const formatPrice = (val: number) => {
@@ -454,7 +598,7 @@ export default function DashboardView({ setActiveTab, refreshKey, triggerRefresh
                   {/* Glowing Area Fill */}
                   <Area type="monotone" dataKey="revenue" fill="url(#monthlyAreaGrad)" stroke="url(#monthlyLineGrad)" strokeWidth={3} dot={{ stroke: '#d4af37', strokeWidth: 2, r: 4 }} activeDot={{ r: 6, strokeWidth: 0, fill: '#ffffff' }} />
                   {/* Cylindrical 3D Bar Overlay */}
-                  <Bar dataKey="revenue" fill="url(#monthlyRevenueGrad)" radius={[5, 5, 0, 0]} barSize={20} opacity={0.4} />
+                  <Bar dataKey="revenue" fill="url(#monthlyRevenueGrad)" barSize={20} shape={<CylinderBar />} />
                 </ComposedChart>
               </ResponsiveContainer>
             )}
@@ -733,6 +877,8 @@ export default function DashboardView({ setActiveTab, refreshKey, triggerRefresh
         </div>
 
       </section>
+
+
 
       {/* QUICK ACTIONS MODALS */}
       {activeModal && (

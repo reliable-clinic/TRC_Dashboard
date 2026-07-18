@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Check, X, Trash2, Plus, Calendar } from 'lucide-react';
+import { Clock, Check, X, Trash2, Plus, Calendar, RefreshCw, MessageCircle } from 'lucide-react';
 import { syncManager } from '../utils/syncManager';
 
 interface Appointment {
@@ -24,10 +24,23 @@ export default function AppointmentView({ refreshKey, triggerRefresh }: Appointm
   const [showAddModal, setShowAddModal] = useState(false);
   const [patients, setPatients] = useState<any[]>([]);
   const [form, setForm] = useState({ PatientID: '', AppointmentDate: '', Doctor: 'Dr. Ahsan', Status: 'Scheduled' });
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     fetchAppointments();
   }, [filter, refreshKey]);
+
+  useEffect(() => {
+    // Silently sync website bookings on view load
+    fetch('http://localhost:5000/api/appointments/sync-website', { method: 'POST' })
+      .then(res => {
+        if (res.ok) {
+          fetchAppointments();
+          triggerRefresh();
+        }
+      })
+      .catch(e => console.warn("Background sync failed:", e));
+  }, []);
 
   useEffect(() => {
     if (showAddModal) {
@@ -116,6 +129,51 @@ export default function AppointmentView({ refreshKey, triggerRefresh }: Appointm
     } catch (e) { console.error(e); }
   };
 
+  const handleSyncWebsiteBookings = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/appointments/sync-website', {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(data.message || "Website bookings synced successfully!");
+        fetchAppointments();
+        triggerRefresh();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || "Failed to sync website bookings.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Network error: Could not connect to local server to sync website bookings.");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleSendWhatsApp = (app: Appointment) => {
+    const phone = app.Mobile;
+    if (!phone) {
+      alert("No phone number found for this patient.");
+      return;
+    }
+
+    let cleanPhone = phone.replace(/[^0-9]/g, '');
+    if (cleanPhone.startsWith('0')) {
+      cleanPhone = '92' + cleanPhone.substring(1);
+    }
+
+    const dateObj = new Date(app.AppointmentDate);
+    const formattedDate = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const formattedTime = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    const message = `Dear ${app.PatientName},\n\nThis is a reminder for your upcoming appointment at The Reliable Aesthetic Clinic:\n📅 Date: ${formattedDate}\n⏰ Time: ${formattedTime}\n👨‍⚕️ Doctor: ${app.Doctor}\n\nPlease confirm your availability.\n\nThank you!\nTRC Clinic`;
+
+    const url = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
+  };
+
   const handleDelete = async (appId: number) => {
     if (!confirm("Delete this appointment schedule?")) return;
     try {
@@ -169,9 +227,20 @@ export default function AppointmentView({ refreshKey, triggerRefresh }: Appointm
           </button>
         </div>
 
-        <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
-          <Plus size={16} /> Schedule Appointment
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button 
+            className="btn btn-secondary" 
+            onClick={handleSyncWebsiteBookings} 
+            disabled={syncing}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <RefreshCw size={14} className={syncing ? 'spin' : ''} style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} /> 
+            {syncing ? 'Syncing...' : 'Sync Web Bookings'}
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowAddModal(true)}>
+            <Plus size={16} /> Schedule Appointment
+          </button>
+        </div>
       </div>
 
       {/* APPOINTMENTS GRID */}
@@ -229,6 +298,11 @@ export default function AppointmentView({ refreshKey, triggerRefresh }: Appointm
                             <X size={14} color="#ef4444" />
                           </button>
                         </>
+                      )}
+                      {app.Mobile && (
+                        <button style={styles.actionBtn} onClick={() => handleSendWhatsApp(app)} title="Send WhatsApp Reminder">
+                          <MessageCircle size={14} color="#25D366" />
+                        </button>
                       )}
                       <button style={styles.actionBtn} onClick={() => handleDelete(app.AppointmentID)} title="Delete Record">
                         <Trash2 size={14} color="#606070" />
